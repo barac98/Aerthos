@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - currency: object (gold, essence, exp)
+    //   - tower: object (currentFloor, maxFloorReached)
+    //   - paragons: object (slot1-slot5: {race, level, relics})
+    //   - sunderTree: object (nodeID: level)
+    //   - altar: object (upgrades: {blessingID: level}, legacyUnlocked: bool)
+    //   - stats: object (totalResets, lastLogin)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "baracsammuel@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['currency', 'tower', 'paragons', 'sunderTree', 'altar', 'stats']) &&
+             data.currency is map &&
+             data.tower is map &&
+             data.paragons is map &&
+             data.sunderTree is map &&
+             data.altar is map &&
+             data.stats is map;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data);
+      allow update: if (isOwner(userId) && isValidUserProfile(request.resource.data)) || isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}

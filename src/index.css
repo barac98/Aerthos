@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:wght@400;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+@theme {
+  --font-headline: "Noto Serif", serif;
+  --font-body: "Space Grotesk", sans-serif;
+  
+  --color-secondary: #d8c593;
+  --color-primary-container: #00a3ff;
+  --color-on-surface-variant: #bec7d4;
+  --color-surface-container-low: #1b1b1f;
+  --color-surface-container: #1f1f23;
+  --color-surface-container-high: #292a2d;
+  --color-on-surface: #e3e2e6;
+}
+
+@layer utilities {
+  .altar-gradient {
+    background: radial-gradient(circle at center, #1b1b1f 0%, #121316 100%);
+  }
+  .floating-essence {
+    background: radial-gradient(circle, rgba(152, 203, 255, 0.4) 0%, transparent 70%);
+    filter: blur(8px);
+  }
+  @keyframes pulse-white-gold {
+    0%, 100% { 
+      box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(216, 197, 147, 0.1); 
+      border-color: rgba(216, 197, 147, 0.3); 
+    }
+    50% { 
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.4), 0 0 30px rgba(216, 197, 147, 0.3); 
+      border-color: rgba(255, 255, 255, 0.6); 
+    }
+  }
+  .legendary-border-pulse {
+    animation: pulse-white-gold 3s infinite ease-in-out;
+    border-width: 2px;
+  }
+  .rare-border-glow {
+    box-shadow: 0 0 15px rgba(0, 163, 255, 0.3);
+    border: 2px solid rgba(0, 163, 255, 0.5);
+  }
+  .active-halo {
+    position: relative;
+  }
+  .active-halo::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 50px;
+    height: 50px;
+    background: radial-gradient(circle, rgba(216, 197, 147, 0.2) 0%, transparent 70%);
+    border-radius: 50%;
+    z-index: -1;
+    filter: blur(4px);
+  }
+}

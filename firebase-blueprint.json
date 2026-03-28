@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "User Profile",
+      "description": "The main game state for a user.",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "type": "object",
+          "properties": {
+            "gold": { "type": "number", "description": "Current gold amount." },
+            "essence": { "type": "number", "description": "Current essence fragments." },
+            "exp": { "type": "number", "description": "Current experience points." }
+          },
+          "required": ["gold", "essence", "exp"]
+        },
+        "tower": {
+          "type": "object",
+          "properties": {
+            "currentFloor": { "type": "number", "description": "Current tower floor." },
+            "maxFloorReached": { "type": "number", "description": "Maximum floor reached in history." }
+          },
+          "required": ["currentFloor", "maxFloorReached"]
+        },
+        "paragons": {
+          "type": "object",
+          "description": "The user's team of paragons.",
+          "properties": {
+            "slot1": { "$ref": "paragon" },
+            "slot2": { "$ref": "paragon" },
+            "slot3": { "$ref": "paragon" },
+            "slot4": { "$ref": "paragon" },
+            "slot5": { "$ref": "paragon" }
+          }
+        },
+        "sunderTree": {
+          "type": "object",
+          "description": "The user's sunder tree upgrades.",
+          "additionalProperties": { "type": "number" }
+        },
+        "altar": {
+          "type": "object",
+          "description": "The user's celestial altar upgrades.",
+          "properties": {
+            "upgrades": { 
+              "type": "object",
+              "additionalProperties": { "type": "number" }
+            },
+            "legacyUnlocked": { "type": "boolean" }
+          }
+        },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "totalResets": { "type": "number" },
+            "lastLogin": { "type": "number", "description": "Timestamp of last login for offline gains." }
+          }
+        }
+      },
+      "required": ["currency", "tower", "paragons", "sunderTree", "altar", "stats"]
+    },
+    "paragon": {
+      "title": "Paragon",
+      "description": "A single paragon in the user's team.",
+      "type": "object",
+      "properties": {
+        "race": { "type": "string" },
+        "level": { "type": "number" },
+        "relics": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["race", "level", "relics"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "userProfile",
+      "description": "The user's profile and game state."
+    }
+  }
+}
