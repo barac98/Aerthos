@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Component } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sword, 
@@ -50,8 +50,113 @@ import {
   getDoc, 
   setDoc, 
   onSnapshot,
-  Timestamp
+  Timestamp,
+  getDocFromServer
 } from 'firebase/firestore';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  public state: { hasError: boolean; error: Error | null };
+  public props: { children: React.ReactNode };
+
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let message = "Something went wrong.";
+      try {
+        const parsed = JSON.parse(this.state.error?.message || "");
+        if (parsed.error && parsed.error.includes("insufficient permissions")) {
+          message = "You don't have permission to perform this action. Please check your account or contact support.";
+        }
+      } catch (e) {
+        // Not JSON, use default or error message
+        message = this.state.error?.message || message;
+      }
+
+      return (
+        <div className="min-h-screen bg-black flex items-center justify-center p-8 text-center">
+          <div className="max-w-md w-full bg-neutral-900 border border-red-900/50 p-8 rounded-lg shadow-2xl">
+            <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-6" />
+            <h1 className="text-2xl font-headline text-white mb-4 uppercase tracking-widest">System Error</h1>
+            <p className="text-neutral-400 font-body mb-8 leading-relaxed">
+              {message}
+            </p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-8 py-3 bg-red-900/20 border border-red-900/50 text-red-500 uppercase tracking-widest hover:bg-red-900/30 transition-all"
+            >
+              Reload System
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 import { 
   GameState, 
   Paragon, 
@@ -195,6 +300,46 @@ const ALTAR_POSITIONS = [
   'bottom-0 left-1/2 -translate-x-1/2'
 ];
 
+const LegacyStatCard = (props: { type: CelestialAltarUpgrade; level: number; key?: any }) => {
+  const { type, level } = props;
+  const data = ALTAR_NODE_DATA[type];
+  if (!data) return null;
+  const Icon = data.icon;
+
+  const getMultiplierText = () => {
+    switch (type) {
+      case 'auraOfAmbition': return `+${(level * 25).toLocaleString()}% TOTAL GOLD GAIN`;
+      case 'primordialInsight': return `+${(level * 20).toLocaleString()}% TOTAL EXP GAIN`;
+      case 'sunderSync': return `x${Math.pow(1.05, level).toFixed(2)} EFFICIENCY MULT`;
+      case 'vesselCapacity': return `-${level * 2} FLOOR REQ REDUCTION`;
+      case 'essenceSiphon': return `+${(level * 10).toLocaleString()}% FRAGMENT HARVEST`;
+      case 'sunderStrike': return `+${(level * 1).toLocaleString()}% CRIT CHANCE`;
+      case 'celestialMight': return `+${(level * 15).toLocaleString()}% TOTAL ATTACK DMG`;
+      case 'astralHaste': return `+${(level * 10).toLocaleString()}% TOTAL ATTACK SPEED`;
+      case 'divineLuck': return `+${(level * 15).toLocaleString()}% TOTAL LUCK BONUS`;
+      case 'eternalVigor': return `+${(level * 20).toLocaleString()}% TOTAL HP BONUS`;
+      case 'cosmicReach': return `+${(level * 50).toLocaleString()} FLAT DAMAGE BONUS`;
+      case 'voidResilience': return `+${(level * 2).toLocaleString()}% TOTAL DMG REDUCTION`;
+      default: return '';
+    }
+  };
+
+  return (
+    <div className="bg-[#e6d5b8]/20 border border-[#8b7355]/30 p-4 flex flex-col items-center text-center space-y-2 group hover:bg-[#e6d5b8]/30 transition-all">
+      <div className={cn("w-10 h-10 flex items-center justify-center", data.color)}>
+        <Icon className="w-6 h-6 drop-shadow-[0_0_8px_currentColor]" />
+      </div>
+      <div className="text-[10px] font-black text-[#5c3a21] uppercase tracking-widest">{data.name}</div>
+      <div className="text-xs font-black text-[#2d1b10] flex items-center gap-1">
+        LVL {level} <span className="text-lg">/ ∞</span>
+      </div>
+      <div className="text-[9px] font-bold text-[#8b7355] uppercase leading-tight">
+        {getMultiplierText()}
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   // --- Auth State ---
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -202,8 +347,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [offlineGains, setOfflineGains] = useState<{ gold: number; timeAway: number } | null>(null);
 
-  // --- Game State ---
-  const [state, setState] = useState<GameState>(() => {
+  const getInitialState = useCallback((): GameState => {
     const defaultState: GameState = {
       floor: 1,
       maxFloor: 1,
@@ -233,7 +377,7 @@ export default function App() {
         cosmicReach: 0,
         voidResilience: 0,
       },
-      celestialAltarSlots: [], // Will be populated below
+      celestialAltarSlots: Array(5).fill(null).map(() => ALTAR_UPGRADES[Math.floor(Math.random() * ALTAR_UPGRADES.length)]),
       totalAltarUpgrades: 0,
       inventory: [],
       towerAscent: 0,
@@ -243,9 +387,12 @@ export default function App() {
       totalResets: 0,
       totalInfusions: 0,
     };
-    // Initial slots
-    defaultState.celestialAltarSlots = Array(5).fill(null).map(() => ALTAR_UPGRADES[Math.floor(Math.random() * ALTAR_UPGRADES.length)]);
+    return defaultState;
+  }, []);
 
+  // --- Game State ---
+  const [state, setState] = useState<GameState>(() => {
+    const defaultState = getInitialState();
     const saved = localStorage.getItem('creature-tower-save');
     if (saved) {
       try {
@@ -400,7 +547,7 @@ export default function App() {
         }
       }, { merge: true });
     } catch (e) {
-      console.error("Failed to save to Firestore:", e);
+      handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`);
     }
   }, [user]);
 
@@ -846,10 +993,13 @@ export default function App() {
   };
 
   const hardReset = async () => {
-    if (!window.confirm("Are you sure you want to PERMANENTLY delete all progress?")) return;
     localStorage.removeItem('creature-tower-save');
     if (user) {
-      await setDoc(doc(db, 'users', user.uid), {});
+      try {
+        await setDoc(doc(db, 'users', user.uid), getInitialState());
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}`);
+      }
     }
     window.location.reload();
   };
@@ -880,7 +1030,8 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-orange-500/30">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-neutral-950 text-neutral-100 font-sans selection:bg-orange-500/30">
       <AnimatePresence>
         {offlineGains && (
           <motion.div 
@@ -1405,20 +1556,27 @@ export default function App() {
               <div className="relative group mt-8">
                 <div className="absolute -inset-4 bg-cyan-500/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
                 
-                {!state.hasReset && (
+                {state.totalResets === 0 && (
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 px-4 py-2 bg-neutral-900 text-secondary text-[10px] uppercase tracking-widest rounded shadow-2xl border border-secondary/20 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">
-                    Access Granted After 1st Sundering Reset
+                    Requires 1 Sundering Reset to Unlock
                   </div>
                 )}
 
                 <button 
-                  onClick={() => setShowLegacyModal(true)}
-                  className="relative bg-[#2D1B10] border-2 border-[#5C3A21] px-10 py-5 flex items-center gap-6 shadow-2xl transition-transform active:scale-95 group"
+                  onClick={() => {
+                    if (state.totalResets >= 1) {
+                      setShowLegacyModal(true);
+                    }
+                  }}
+                  className={cn(
+                    "relative bg-[#2D1B10] border-2 border-[#5C3A21] px-10 py-5 flex items-center gap-6 shadow-2xl transition-transform active:scale-95 group",
+                    state.totalResets === 0 && "opacity-50 grayscale cursor-not-allowed"
+                  )}
                 >
                   <div className="relative w-12 h-16 bg-[#3D2616] border-l-4 border-[#1E120A] flex flex-col justify-center items-center">
                     <div className="w-full h-1 bg-[#1E120A]/20 my-1" />
                     <div className="w-full h-1 bg-[#1E120A]/20 my-1" />
-                    {!state.hasReset && (
+                    {state.totalResets === 0 && (
                       <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-6 bg-secondary flex items-center justify-center shadow-lg">
                         <Lock className="w-3 h-3 text-[#241a00]" />
                       </div>
@@ -1573,77 +1731,104 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex items-center justify-center p-6"
+            className="fixed inset-0 bg-black/95 backdrop-blur-2xl z-[100] flex items-center justify-center p-4 sm:p-8"
           >
             <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-neutral-900 border border-neutral-800 p-8 rounded-3xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+              initial={{ rotateY: 90, opacity: 0, scale: 0.8 }}
+              animate={{ rotateY: 0, opacity: 1, scale: 1 }}
+              exit={{ rotateY: -90, opacity: 0, scale: 0.8 }}
+              transition={{ type: "spring", damping: 20, stiffness: 100 }}
+              className="relative w-full max-w-5xl aspect-[1.4/1] bg-[#2D1B10] rounded-lg shadow-[0_0_100px_rgba(0,0,0,0.8)] flex overflow-hidden border-4 border-[#5C3A21]"
             >
-              <div className="flex justify-between items-center mb-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-yellow-500/20 rounded-2xl flex items-center justify-center">
-                    <History className="w-6 h-6 text-yellow-500" />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-black text-white uppercase tracking-tight">Your Legacy</h2>
-                    <p className="text-neutral-500 text-[10px] font-bold uppercase tracking-widest">Permanent Celestial Records</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowLegacyModal(false)}
-                  className="w-10 h-10 bg-neutral-800 hover:bg-neutral-700 rounded-full flex items-center justify-center transition-all"
-                >
-                  <X className="w-5 h-5 text-white" />
-                </button>
+              {/* Spine */}
+              <div className="absolute left-1/2 top-0 bottom-0 w-8 bg-gradient-to-r from-[#1E120A] via-[#3D2616] to-[#1E120A] -translate-x-1/2 z-20 shadow-2xl" />
+
+              {/* Mana Particles */}
+              <div className="absolute inset-0 pointer-events-none z-10">
+                {[...Array(20)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    animate={{
+                      y: [-20, -100],
+                      x: [0, (Math.random() - 0.5) * 50],
+                      opacity: [0, 0.6, 0],
+                      scale: [0, 1, 0]
+                    }}
+                    transition={{
+                      duration: 2 + Math.random() * 3,
+                      repeat: Infinity,
+                      delay: Math.random() * 5
+                    }}
+                    className={cn(
+                      "absolute w-1 h-1 rounded-full blur-[2px]",
+                      i % 2 === 0 ? "bg-cyan-400 shadow-[0_0_10px_#22d3ee]" : "bg-purple-400 shadow-[0_0_10px_#c084fc]"
+                    )}
+                    style={{
+                      left: `${Math.random() * 100}%`,
+                      top: `${80 + Math.random() * 20}%`
+                    }}
+                  />
+                ))}
               </div>
 
-              <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-                {ALTAR_UPGRADES.map((type) => {
-                  const data = ALTAR_NODE_DATA[type];
-                  const level = state.celestialAltar[type];
-                  if (level === 0) return null;
-                  
-                  return (
-                    <div key={type} className="bg-neutral-800/50 p-4 rounded-2xl border border-neutral-700 flex items-center justify-between group hover:border-yellow-500/50 transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className={cn("w-12 h-12 rounded-xl bg-neutral-900 flex items-center justify-center shadow-inner", data.color)}>
-                          <data.icon className="w-6 h-6" />
-                        </div>
-                        <div>
-                          <div className="text-sm font-black text-white uppercase tracking-tight">{data.name}</div>
-                          <div className="text-[10px] text-neutral-500 font-bold uppercase tracking-tighter">{data.desc}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-lg font-black text-yellow-500">LVL {level}</div>
-                        <div className="text-[9px] text-neutral-600 font-bold uppercase">Permanent</div>
-                      </div>
+              {/* Left Page */}
+              <div className="flex-1 bg-[#e6d5b8] relative p-12 overflow-hidden">
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/parchment.png')] opacity-40" />
+                <div className="relative z-10 h-full flex flex-col">
+                  <div className="text-center mb-12">
+                    <h2 className="font-headline text-4xl text-[#2d1b10] uppercase tracking-[0.2em] leading-tight drop-shadow-sm">
+                      The Codex of <br /> Ancestral Power
+                    </h2>
+                    <div className="w-24 h-px bg-[#8b7355] mx-auto my-4" />
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-black text-[#8b7355] uppercase tracking-[0.3em]">Total Sundering Resets Performed</p>
+                      <p className="text-5xl font-headline text-[#2d1b10] drop-shadow-[0_0_15px_rgba(45,27,16,0.2)]">
+                        {state.totalResets}
+                      </p>
                     </div>
-                  );
-                })}
-                {state.totalAltarUpgrades === 0 && (
-                  <div className="py-20 text-center text-neutral-500 italic text-sm">
-                    No legacy recorded yet. Ascend at the Altar to begin.
                   </div>
-                )}
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      {ALTAR_UPGRADES.slice(0, 6).map((type) => (
+                        <LegacyStatCard key={type} type={type} level={state.celestialAltar[type] as number} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="mt-8 pt-6 border-t border-neutral-800 flex justify-between items-center">
-                <div className="text-[10px] font-black text-neutral-500 uppercase tracking-widest">
-                  Total Celestial Levels: {state.totalAltarUpgrades}
-                </div>
+              {/* Right Page */}
+              <div className="flex-1 bg-[#e6d5b8] relative p-12 overflow-hidden border-l border-[#8b7355]/20">
+                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/parchment.png')] opacity-40" />
                 <button
                   onClick={() => setShowLegacyModal(false)}
-                  className="px-8 py-3 bg-yellow-600 hover:bg-yellow-500 text-white font-black text-xs rounded-xl uppercase tracking-widest transition-all"
+                  className="absolute top-6 right-6 w-10 h-10 flex items-center justify-center text-[#5c3a21] hover:text-[#2d1b10] transition-colors z-30"
                 >
-                  Close Records
+                  <X className="w-8 h-8" />
                 </button>
+
+                <div className="relative z-10 h-full flex flex-col">
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-4 mt-12">
+                    <div className="grid grid-cols-2 gap-4">
+                      {ALTAR_UPGRADES.slice(6).map((type) => (
+                        <LegacyStatCard key={type} type={type} level={state.celestialAltar[type] as number} />
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 pt-6 border-t border-[#8b7355]/30 text-center">
+                    <p className="text-[9px] font-black text-[#8b7355] uppercase tracking-[0.4em] italic">
+                      "Thy deeds are etched in the fabric of the Spire"
+                    </p>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
+    </ErrorBoundary>
   );
 }

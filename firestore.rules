@@ -33,13 +33,23 @@ service cloud.firestore {
     }
 
     function isValidUserProfile(data) {
-      return data.keys().hasAll(['currency', 'tower', 'paragons', 'sunderTree', 'altar', 'stats']) &&
-             data.currency is map &&
-             data.tower is map &&
-             data.paragons is map &&
+      return data.keys().hasAll(['floor', 'maxFloor', 'gold', 'essenceFragments', 'team', 'sunderTree', 'celestialAltar', 'celestialAltarSlots', 'totalAltarUpgrades', 'inventory', 'towerAscent', 'playerLevel', 'playerExp', 'hasReset', 'totalResets', 'totalInfusions']) &&
+             data.floor is number &&
+             data.maxFloor is number &&
+             data.gold is number &&
+             data.essenceFragments is number &&
+             data.team is list &&
              data.sunderTree is map &&
-             data.altar is map &&
-             data.stats is map;
+             data.celestialAltar is map &&
+             data.celestialAltarSlots is list &&
+             data.totalAltarUpgrades is number &&
+             data.inventory is list &&
+             data.towerAscent is number &&
+             data.playerLevel is number &&
+             data.playerExp is number &&
+             data.hasReset is bool &&
+             data.totalResets is number &&
+             data.totalInfusions is number;
     }
 
     match /users/{userId} {

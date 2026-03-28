@@ -5,73 +5,93 @@
       "description": "The main game state for a user.",
       "type": "object",
       "properties": {
-        "currency": {
-          "type": "object",
-          "properties": {
-            "gold": { "type": "number", "description": "Current gold amount." },
-            "essence": { "type": "number", "description": "Current essence fragments." },
-            "exp": { "type": "number", "description": "Current experience points." }
-          },
-          "required": ["gold", "essence", "exp"]
-        },
-        "tower": {
-          "type": "object",
-          "properties": {
-            "currentFloor": { "type": "number", "description": "Current tower floor." },
-            "maxFloorReached": { "type": "number", "description": "Maximum floor reached in history." }
-          },
-          "required": ["currentFloor", "maxFloorReached"]
-        },
-        "paragons": {
-          "type": "object",
-          "description": "The user's team of paragons.",
-          "properties": {
-            "slot1": { "$ref": "paragon" },
-            "slot2": { "$ref": "paragon" },
-            "slot3": { "$ref": "paragon" },
-            "slot4": { "$ref": "paragon" },
-            "slot5": { "$ref": "paragon" }
-          }
+        "floor": { "type": "number" },
+        "maxFloor": { "type": "number" },
+        "currentRunMaxFloor": { "type": "number" },
+        "gold": { "type": "number" },
+        "essenceFragments": { "type": "number" },
+        "team": {
+          "type": "array",
+          "items": { "$ref": "paragon" }
         },
         "sunderTree": {
           "type": "object",
-          "description": "The user's sunder tree upgrades.",
-          "additionalProperties": { "type": "number" }
-        },
-        "altar": {
-          "type": "object",
-          "description": "The user's celestial altar upgrades.",
           "properties": {
-            "upgrades": { 
+            "luminary": {
               "type": "object",
-              "additionalProperties": { "type": "number" }
+              "properties": {
+                "strike": { "type": "number" },
+                "ancestry": { "type": "number" }
+              }
             },
-            "legacyUnlocked": { "type": "boolean" }
+            "shadow": {
+              "type": "object",
+              "properties": {
+                "haste": { "type": "number" },
+                "thirst": { "type": "number" }
+              }
+            }
           }
         },
+        "celestialAltar": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "celestialAltarSlots": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "totalAltarUpgrades": { "type": "number" },
+        "inventory": {
+          "type": "array",
+          "items": { "$ref": "powerCore" }
+        },
+        "towerAscent": { "type": "number" },
+        "playerLevel": { "type": "number" },
+        "playerExp": { "type": "number" },
+        "hasReset": { "type": "boolean" },
+        "totalResets": { "type": "number" },
+        "totalInfusions": { "type": "number" },
         "stats": {
           "type": "object",
           "properties": {
-            "totalResets": { "type": "number" },
-            "lastLogin": { "type": "number", "description": "Timestamp of last login for offline gains." }
+            "lastLogin": { "type": "number" }
           }
         }
       },
-      "required": ["currency", "tower", "paragons", "sunderTree", "altar", "stats"]
+      "required": [
+        "floor", "maxFloor", "gold", "essenceFragments", "team", 
+        "sunderTree", "celestialAltar", "celestialAltarSlots", 
+        "totalAltarUpgrades", "inventory", "towerAscent", "playerLevel", 
+        "playerExp", "hasReset", "totalResets", "totalInfusions"
+      ]
     },
     "paragon": {
       "title": "Paragon",
       "description": "A single paragon in the user's team.",
       "type": "object",
       "properties": {
+        "id": { "type": "string" },
         "race": { "type": "string" },
+        "role": { "type": "string" },
         "level": { "type": "number" },
+        "exp": { "type": "number" },
+        "expToNext": { "type": "number" },
         "relics": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "type": "object" }
         }
-      },
-      "required": ["race", "level", "relics"]
+      }
+    },
+    "powerCore": {
+      "title": "Power Core",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tier": { "type": "string" },
+        "level": { "type": "number" },
+        "bonusDmg": { "type": "number" }
+      }
     }
   },
   "firestore": {
