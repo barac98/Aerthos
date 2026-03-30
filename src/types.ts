@@ -29,6 +29,7 @@ export interface Paragon {
   exp: number;
   expToNext: number;
   relics: (Relic | null)[]; // 3 slots
+  attackCount?: number; // Track attacks for special effects
 }
 
 export interface SunderTree {
@@ -82,17 +83,45 @@ export interface GameState {
   };
 }
 
-export const PARAGON_DATA: Record<ParagonRace, { category: RaceCategory; role: ParagonRole; description: string; baseCost: number }> = {
-  'Human': { category: 'Luminary', role: 'DMG', description: 'Crit: 10% chance for 2x DMG', baseCost: 100 },
-  'Elf': { category: 'Luminary', role: 'SPD', description: 'Speed: +15% Attack Speed', baseCost: 250 },
-  'Dwarf': { category: 'Luminary', role: 'SUP', description: 'Gold: +20% Gold Find', baseCost: 500 },
-  'Giant': { category: 'Luminary', role: 'TNK', description: 'Flat DMG: +25 Base DMG', baseCost: 1000 },
-  'Faekin': { category: 'Luminary', role: 'SUP', description: 'EXP: +20% EXP Gain', baseCost: 2500 },
-  'Vampire': { category: 'Shadow', role: 'DMG', description: 'Life-Thirst: 1% Max HP DMG', baseCost: 5000 },
-  'Dark Elf': { category: 'Shadow', role: 'SPD', description: 'Shadow Step: +20% Speed', baseCost: 7500 },
-  'Obsidian-Hearted': { category: 'Shadow', role: 'SUP', description: 'Item Find: +25% Luck', baseCost: 10000 },
-  'Stone-Skin': { category: 'Shadow', role: 'TNK', description: 'Aura of Dread: +30% Total DMG', baseCost: 25000 },
-  'Chimera': { category: 'Shadow', role: 'DMG', description: 'Primal Rage: +5% DMG per Level', baseCost: 50000 },
+export const PARAGON_DATA: Record<ParagonRace, { category: RaceCategory; role: ParagonRole; description: string; lore: string; baseCost: number; asset: string }> = {
+  'Human': { 
+    category: 'Luminary', 
+    role: 'DMG', 
+    description: 'Ambition: +0.02 Flat DMG per Floor Height', 
+    lore: 'A survivor of the first Sundering, carrying a blade forged from the last shard of the Human Kingdom’s throne.',
+    baseCost: 100,
+    asset: 'kaelen_card.png'
+  },
+  'Elf': { 
+    category: 'Luminary', 
+    role: 'SPD', 
+    description: 'Rapid Crit: +10% Crit Chance. +2% Crit DMG per Floor', 
+    lore: 'She moves through the rifts like a ghost, using the dark magic of the Sundered Realm to strike faster than light.',
+    baseCost: 250,
+    asset: 'elara.png'
+  },
+  'Dwarf': { category: 'Luminary', role: 'SUP', description: 'Gold: +20% Gold Find', lore: 'Master of the deep forges, his greed is only matched by his skill.', baseCost: 500, asset: 'dwarf.png' },
+  'Giant': { 
+    category: 'Luminary', 
+    role: 'TNK', 
+    description: 'Mountain Crush: 0.5x Speed, 3x DMG. 10th Hit: 10x AoE DMG', 
+    lore: 'A lumbering mountain of stone, Oghul doesn\'t fight; he simply exists, and the Tower crumbles around him.',
+    baseCost: 1000,
+    asset: 'oghul.png'
+  },
+  'Faekin': { category: 'Luminary', role: 'SUP', description: 'EXP: +20% EXP Gain', lore: 'Ethereal beings that feed on the memories of the tower.', baseCost: 2500, asset: 'faekin.png' },
+  'Vampire': { 
+    category: 'Shadow', 
+    role: 'DMG', 
+    description: 'Life-Thirst: 0.5% Max HP DMG. 2x vs Bosses', 
+    lore: 'Once a noble, Mor\'Goth\'s spell turned his ambition into an eternal hunger that feeds on the Tower\'s monsters.',
+    baseCost: 5000,
+    asset: 'silas_card.png'
+  },
+  'Dark Elf': { category: 'Shadow', role: 'SPD', description: 'Shadow Step: +20% Speed', lore: 'Exiled from the light, they embrace the cold embrace of the void.', baseCost: 7500, asset: 'dark_elf.png' },
+  'Obsidian-Hearted': { category: 'Shadow', role: 'SUP', description: 'Item Find: +25% Luck', lore: 'Beings made of the very stone that forms the Spire.', baseCost: 10000, asset: 'obsidian.png' },
+  'Stone-Skin': { category: 'Shadow', role: 'TNK', description: 'Aura of Dread: +30% Total DMG', lore: 'Their skin is as hard as the foundations of Aerthos.', baseCost: 25000, asset: 'stone_skin.png' },
+  'Chimera': { category: 'Shadow', role: 'DMG', description: 'Primal Rage: +5% DMG per Level', lore: 'A fusion of a thousand beasts, driven by pure instinct.', baseCost: 50000, asset: 'chimera.png' },
 };
 
 export const TIER_COLORS: Record<Tier, string> = {

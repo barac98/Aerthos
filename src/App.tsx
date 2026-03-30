@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef, Component } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Component, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sword, 
@@ -345,6 +345,8 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [offlineGains, setOfflineGains] = useState<{ gold: number; timeAway: number } | null>(null);
 
   const getInitialState = useCallback((): GameState => {
@@ -482,6 +484,10 @@ export default function App() {
   const [enemyHP, setEnemyHP] = useState(0);
   const [enemyMaxHP, setEnemyMaxHP] = useState(0);
   const [activeTab, setActiveTab] = useState<'team' | 'sunder-tree' | 'altar' | 'lore'>('team');
+  const [loreBgLoaded, setLoreBgLoaded] = useState(false);
+  const loreBg = "https://picsum.photos/seed/aerthos-lore/1920/1080";
+  const loreThumb = "https://picsum.photos/seed/aerthos-lore/20/20";
+  const combatCanvasRef = useRef<{ addDamage: (value: string, color: string) => void }>(null);
   const [combatLog, setCombatLog] = useState<{ id: number; text: string; type: 'dmg' | 'gold' | 'loot' }[]>([]);
   const [floatingGold, setFloatingGold] = useState<{ id: number; amount: number; x: number; y: number }[]>([]);
   const [attackProgress, setAttackProgress] = useState(0);
@@ -490,6 +496,7 @@ export default function App() {
   const [isAltarFlipping, setIsAltarFlipping] = useState<number | null>(null);
   
   const logIdRef = useRef(0);
+  const attackCountsRef = useRef<Record<string, number>>({});
   const lastSaveRef = useRef(0);
 
   // --- Auth & Firestore ---
@@ -499,32 +506,33 @@ export default function App() {
       setAuthReady(true);
       
       if (firebaseUser) {
-        // Load from Firestore
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          const lastLogin = data.stats?.lastLogin || Date.now();
-          const now = Date.now();
-          const timeAway = (now - lastLogin) / 1000; // seconds
+        try {
+          // Load from Firestore
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            const lastLogin = data.stats?.lastLogin || Date.now();
+            const now = Date.now();
+            const timeAway = (now - lastLogin) / 1000; // seconds
 
-          // Calculate Offline Gains
-          if (timeAway > 60) { // At least 1 minute away
-            // We need to estimate GoldPerMin from the saved state
-            // For simplicity, we'll calculate it from the loaded stats
-            // This is a bit tricky since teamStats is a derived value
-            // We'll use a simplified version for offline gains
-            const goldPerSec = 5; // Base
-            const gains = Math.floor(timeAway * (goldPerSec * 0.5));
-            setOfflineGains({ gold: gains, timeAway });
-            
-            setState(prev => ({
-              ...prev,
-              ...data,
-              gold: (data.gold || 0) + gains
-            }));
-          } else {
-            setState(prev => ({ ...prev, ...data }));
+            // Calculate Offline Gains
+            if (timeAway > 60) { // At least 1 minute away
+              const goldPerSec = 5; // Base
+              const gains = Math.floor(timeAway * (goldPerSec * 0.5));
+              setOfflineGains({ gold: gains, timeAway });
+              
+              setState(prev => ({
+                ...prev,
+                ...data,
+                gold: (data.gold || 0) + gains
+              }));
+            } else {
+              setState(prev => ({ ...prev, ...data }));
+            }
           }
+        } catch (e) {
+          console.error("Failed to load user data:", e);
+          handleFirestoreError(e, OperationType.GET, `users/${firebaseUser.uid}`);
         }
       }
       setLoading(false);
@@ -599,13 +607,13 @@ export default function App() {
     const astralSpeedMult = 1 + ((state.celestialAltar?.astralHaste || 0) * 0.10);
     const cosmicFlatDmg = (state.celestialAltar?.cosmicReach || 0) * 50;
 
-    state.team.forEach((paragon, index) => {
+    const paragonStats = state.team.map((paragon, index) => {
       const requiredFloor = Math.max(1, SLOT_UNLOCKS[index] - vesselReduction);
-      if (!paragon || state.floor < requiredFloor) return;
+      if (!paragon || state.floor < requiredFloor) return null;
       activeParagons++;
       
       const data = PARAGON_DATA[paragon.race];
-      if (!data) return;
+      if (!data) return null;
 
       // Relic Multipliers
       const relicAtkMult = 1 + (paragon.relics.filter(r => r?.type === 'ATK').length * 0.2);
@@ -615,6 +623,8 @@ export default function App() {
 
       let baseAtk = (10 + (paragon.level * 2)) * relicAtkMult;
       let baseSpeed = 1 * relicSpdMult;
+      let critChanceBonus = 0;
+      let critDmgBonus = 0;
       
       totalExpMult += (relicExpMult - 1);
       totalGoldMult += (relicGoldMult - 1);
@@ -630,24 +640,50 @@ export default function App() {
       if (paragon.race === 'Stone-Skin') baseAtk *= 1.3;
       if (paragon.race === 'Chimera') baseAtk *= (1 + (paragon.level * 0.05));
 
-      totalAtk += baseAtk;
-      totalSpeed += baseSpeed;
+      // Paragon Specific Formulas
+      if (paragon.race === 'Kaelen') {
+        baseAtk += (0.02 * state.floor);
+      }
+      if (paragon.race === 'Elara') {
+        critChanceBonus += 0.1;
+        critDmgBonus += (0.02 * state.currentRunMaxFloor);
+      }
+      if (paragon.race === 'Oghul') {
+        baseSpeed *= 0.5;
+        baseAtk *= 3;
+      }
+
+      const finalAtk = (baseAtk + (coreBonus / Math.max(1, activeParagons)) + (cosmicFlatDmg / Math.max(1, activeParagons))) * globalAtkMult * prestigeMultiplier * celestialDmgMult;
+      const finalSpeed = baseSpeed * globalSpeedMult * astralSpeedMult;
+
+      totalAtk += finalAtk;
+      totalSpeed += finalSpeed;
+
+      return {
+        id: paragon.id,
+        race: paragon.race,
+        atk: finalAtk,
+        speed: finalSpeed,
+        critChance: critChanceBonus,
+        critDmg: 2 + critDmgBonus, // Base crit is 2x
+      };
     });
 
     const avgSpeed = activeParagons > 0 ? (totalSpeed / activeParagons) : 1;
 
     return {
-      atk: (totalAtk + coreBonus + cosmicFlatDmg) * globalAtkMult * prestigeMultiplier * celestialDmgMult,
-      speed: avgSpeed * globalSpeedMult * astralSpeedMult,
+      atk: totalAtk,
+      speed: avgSpeed,
       hpPercent: totalHpPercent * (1 + ((state.celestialAltar?.eternalVigor || 0) * 0.2)),
       goldMult: totalGoldMult,
       expMult: totalExpMult,
       luckMult: totalLuckMult,
       critChance: (state.celestialAltar?.sunderStrike || 0) * 0.01,
       dmgReduction: Math.min(0.8, (state.celestialAltar?.voidResilience || 0) * 0.02),
-      teamDps: (totalAtk + coreBonus + cosmicFlatDmg) * globalAtkMult * prestigeMultiplier * celestialDmgMult * (avgSpeed * globalSpeedMult * astralSpeedMult) * (1 + (state.totalInfusions * 0.05))
+      teamDps: totalAtk * avgSpeed * (1 + (state.totalInfusions * 0.05)),
+      paragonStats
     };
-  }, [state.team, state.floor, globalAtkMult, globalSpeedMult, globalExpMult, globalHpDmgMult, coreBonus, prestigeMultiplier, state.celestialAltar, state.totalInfusions]);
+  }, [state.team, state.floor, state.currentRunMaxFloor, globalAtkMult, globalSpeedMult, globalExpMult, globalHpDmgMult, coreBonus, prestigeMultiplier, state.celestialAltar, state.totalInfusions]);
 
   const towerLore = useMemo(() => {
     if (state.floor <= 100) return { name: 'Human Kingdom', color: 'from-green-900/20' };
@@ -790,23 +826,64 @@ export default function App() {
     const interval = setInterval(() => {
       if (!authReady || loading) return;
       
-      // Attack!
-      let damage = teamStats.teamDps + (enemyMaxHP * teamStats.hpPercent);
-      
-      // Crit Logic
-      const critChance = teamStats.critChance || 0;
-      const hasHuman = state.team.some(p => p?.race === 'Human');
-      const finalCritChance = hasHuman ? critChance + 0.1 : critChance;
-      
-      if (Math.random() < finalCritChance) {
-        damage *= 2;
-        addLog("CRITICAL HIT!", 'dmg');
+      const isBoss = state.floor % 10 === 0;
+      let totalDamageDealt = 0;
+
+      if (teamStats.paragonStats) {
+        teamStats.paragonStats.forEach((pStat) => {
+          if (!pStat) return;
+
+          // Base damage for this tick
+          let damage = pStat.atk * (TICK_RATE / 1000) * pStat.speed;
+
+          // Silas Special: 0.5% Max HP bonus, 2x vs Bosses
+          if (pStat.race === 'Silas') {
+            const bonus = enemyMaxHP * 0.005;
+            damage += bonus * (TICK_RATE / 1000) * pStat.speed;
+            if (isBoss) damage *= 2;
+          }
+
+          // Crit Logic
+          const critChance = (teamStats.critChance || 0) + pStat.critChance;
+          const hasHuman = state.team.some(p => p?.race === 'Human');
+          const finalCritChance = hasHuman ? critChance + 0.1 : critChance;
+          
+          if (Math.random() < finalCritChance) {
+            damage *= pStat.critDmg;
+            if (Math.random() < 0.05) addLog(`${pStat.race} CRITICAL!`, 'dmg');
+          }
+
+          // Oghul Special: 10th attack AoE
+          if (pStat.race === 'Oghul') {
+            const currentProgress = (attackCountsRef.current[pStat.id] || 0) + (TICK_RATE / 1000) * pStat.speed;
+            attackCountsRef.current[pStat.id] = currentProgress;
+            
+            if (currentProgress >= 1) {
+              const fullAttacks = Math.floor(currentProgress);
+              attackCountsRef.current[pStat.id] -= fullAttacks;
+              
+              const totalKey = `${pStat.id}_total`;
+              let total = (attackCountsRef.current[totalKey] || 0) + fullAttacks;
+              if (total >= 10) {
+                damage += pStat.atk * 10;
+                total -= 10;
+                addLog("OGHUL AOE SMASH!", 'dmg');
+              }
+              attackCountsRef.current[totalKey] = total;
+            }
+          }
+
+          totalDamageDealt += damage;
+        });
       }
 
-      if (isNaN(damage) || damage < 0) damage = 1;
+      // Global HP % damage
+      totalDamageDealt += (enemyMaxHP * teamStats.hpPercent) * (TICK_RATE / 1000);
+
+      if (isNaN(totalDamageDealt) || totalDamageDealt < 0) totalDamageDealt = 1;
 
       setEnemyHP(curr => {
-        const remaining = curr - damage;
+        const remaining = curr - totalDamageDealt;
         if (remaining <= 0) {
           handleEnemyDefeat();
           return 0;
@@ -816,14 +893,26 @@ export default function App() {
     }, TICK_RATE);
 
     return () => clearInterval(interval);
-  }, [teamStats, enemyMaxHP, handleEnemyDefeat, state.team, addLog, authReady, loading]);
+  }, [teamStats, enemyMaxHP, handleEnemyDefeat, state.team, state.floor, addLog, authReady, loading]);
 
   const login = async () => {
+    if (isLoggingIn) return;
     const provider = new GoogleAuthProvider();
+    setLoginError(null);
+    setIsLoggingIn(true);
     try {
       await signInWithPopup(auth, provider);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Login failed:", e);
+      if (e.code === 'auth/unauthorized-domain') {
+        setLoginError("This domain is not authorized for login. Please check your Firebase console settings.");
+      } else if (e.code === 'auth/popup-closed-by-user') {
+        setLoginError("Login popup was closed. Please try again.");
+      } else {
+        setLoginError(e.message || "Login failed. Please try again.");
+      }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -1021,10 +1110,16 @@ export default function App() {
         </div>
         <button 
           onClick={login}
-          className="px-12 py-4 bg-[#1a1a1e] border border-[#c5a059]/40 text-[#c5a059] font-black uppercase tracking-[0.3em] hover:bg-[#c5a059]/10 transition-all rounded-sm shadow-[0_0_30px_rgba(197,160,89,0.1)]"
+          disabled={isLoggingIn}
+          className="px-12 py-4 bg-[#1a1a1e] border border-[#c5a059]/40 text-[#c5a059] font-black uppercase tracking-[0.3em] hover:bg-[#c5a059]/10 transition-all rounded-sm shadow-[0_0_30px_rgba(197,160,89,0.1)] disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Begin Your Ascent
+          {isLoggingIn ? "Opening Portal..." : "Begin Your Ascent"}
         </button>
+        {loginError && (
+          <div className="text-red-500 text-[10px] font-black uppercase tracking-widest bg-red-500/10 px-4 py-2 border border-red-500/20 max-w-md text-center">
+            {loginError}
+          </div>
+        )}
       </div>
     );
   }
@@ -1150,41 +1245,53 @@ export default function App() {
                   );
                 }
 
+                const isCard = PARAGON_DATA[paragon.race]?.asset.includes('_card');
+                
                 return (
-                  <div key={i} className="h-32 bg-[#0a0a0c]/60 border border-white/10 rounded-lg p-4 flex gap-4 group hover:border-[#c5a059]/30 transition-all relative overflow-hidden">
-                    <div className="w-24 h-24 bg-neutral-900 border border-white/5 rounded-md overflow-hidden flex-shrink-0">
+                  <div 
+                    key={i} 
+                    className="h-32 bg-cover bg-center border border-white/10 rounded-lg p-4 flex gap-4 group hover:border-[#c5a059]/30 transition-all relative overflow-hidden"
+                    style={{ 
+                      backgroundImage: isCard ? 'none' : 'url(/screen.jpg)',
+                      backgroundColor: isCard ? 'transparent' : '#0a0a0c',
+                      willChange: 'transform'
+                    }}
+                  >
+                    <div className="w-24 h-24 bg-black/40 border border-white/5 rounded-md overflow-hidden flex-shrink-0 relative">
                       <img 
-                        src={`https://picsum.photos/seed/${paragon.race}${paragon.id}/200/200`} 
+                        src={`/${PARAGON_DATA[paragon.race]?.asset || 'kaelen.png'}`} 
                         alt={paragon.race} 
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                        className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity"
+                        style={{
+                          mixBlendMode: isCard ? 'normal' : 'color-dodge',
+                          filter: isCard ? 'none' : 'contrast(1.2) brightness(1.1)',
+                          willChange: 'transform'
+                        }}
                         referrerPolicy="no-referrer"
+                        loading="lazy"
                       />
                     </div>
-                    <div className="flex-1 flex flex-col justify-center">
-                      <div className="text-[10px] font-black text-white uppercase tracking-wider mb-1">
-                        {paragon.id === 'aris' ? 'Aris Thorne' : paragon.id === 'elowen' ? 'Elowen Starsight' : paragon.race} ({PARAGON_DATA[paragon.race]?.category} {paragon.race} - {paragon.role})
+                    <div className="flex-1 flex flex-col justify-center z-10">
+                      <div className="text-[10px] font-black text-white uppercase tracking-wider mb-1 drop-shadow-md">
+                        {paragon.race} ({PARAGON_DATA[paragon.race]?.category} - {paragon.role})
                       </div>
                       <div className="space-y-1.5 mb-2">
-                        <div className="h-1 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                        <div className="h-1 bg-black/60 rounded-full overflow-hidden border border-white/10">
                           <motion.div 
-                            className="h-full bg-[#8fb8ff] shadow-[0_0_8px_rgba(143,184,255,0.4)]"
+                            className="h-full bg-gradient-to-r from-blue-600 to-blue-400 shadow-[0_0_8px_rgba(143,184,255,0.4)]"
                             initial={false}
                             animate={{ width: `${(paragon.exp / paragon.expToNext) * 100}%` }}
                           />
                         </div>
-                        <div className="h-1 bg-black/40 rounded-full overflow-hidden border border-white/5">
-                          <motion.div 
-                            className="h-full bg-[#a855f7] shadow-[0_0_8px_rgba(168,85,247,0.4)]"
-                            initial={false}
-                            animate={{ width: '40%' }}
-                          />
+                        <div className="text-[8px] font-bold text-neutral-400 uppercase tracking-tighter">
+                          LVL {paragon.level} • {PARAGON_DATA[paragon.race]?.description}
                         </div>
                       </div>
                       <div className="flex gap-2">
                         {[0, 1, 2].map(ri => (
-                          <div key={ri} className="w-6 h-6 rounded-full border border-white/10 bg-black/40 flex items-center justify-center">
+                          <div key={ri} className="w-6 h-6 rounded-full border border-white/20 bg-black/60 flex items-center justify-center shadow-inner">
                             {paragon.relics[ri] ? (
-                              <div className="w-3 h-3 rounded-full bg-neutral-400" />
+                              <div className="w-3 h-3 rounded-full bg-[#c5a059] shadow-[0_0_5px_rgba(197,160,89,0.5)]" />
                             ) : (
                               <div className="w-2 h-2 rounded-full bg-white/5" />
                             )}
@@ -1203,22 +1310,20 @@ export default function App() {
               <div className="absolute w-[80%] h-[1px] bg-[#c5a059]/20 rotate-[-35deg] shadow-[0_0_20px_rgba(197,160,89,0.1)]" />
               
               {/* Floating Numbers */}
-              <div className="flex flex-col items-center gap-12 z-10">
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="text-3xl font-serif italic text-[#c5a059] drop-shadow-[0_0_10px_rgba(197,160,89,0.3)]"
-                >
-                  -1,420
-                </motion.div>
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="text-xl font-serif italic text-[#a855f7] drop-shadow-[0_0_10px_rgba(168,85,247,0.3)]"
-                >
-                  +45 MP
-                </motion.div>
+              <div className="flex flex-col items-center gap-12 z-10 pointer-events-none">
+                <AnimatePresence>
+                  {enemyHP < enemyMaxHP && (
+                    <motion.div
+                      key={enemyHP}
+                      initial={{ opacity: 0, y: 0, scale: 0.5 }}
+                      animate={{ opacity: 1, y: -40, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-2xl font-black text-red-500 drop-shadow-[0_0_10px_rgba(239,68,68,0.5)] font-mono"
+                    >
+                      -{Math.floor(teamStats.teamDps / (1000 / TICK_RATE)).toLocaleString()}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* Bottom Panels */}
@@ -1233,7 +1338,13 @@ export default function App() {
                 </div>
                 <div className="bg-[#0a0a0c]/90 border border-white/5 p-6 rounded-sm shadow-2xl">
                   <div className="text-[10px] font-black text-neutral-500 uppercase tracking-widest mb-2">Team DPS</div>
-                  <div className="text-3xl font-black text-white font-mono">1.2M</div>
+                  <div className="text-3xl font-black text-white font-mono">
+                    {teamStats.teamDps > 1000000 
+                      ? `${(teamStats.teamDps / 1000000).toFixed(2)}M` 
+                      : teamStats.teamDps > 1000 
+                        ? `${(teamStats.teamDps / 1000).toFixed(1)}K` 
+                        : Math.floor(teamStats.teamDps)}
+                  </div>
                 </div>
                 <div className="bg-[#0a0a0c]/90 border border-white/5 p-6 rounded-sm shadow-2xl">
                   <div className="text-[10px] font-black text-neutral-500 uppercase tracking-widest mb-2">Tower Ascent</div>
@@ -1248,17 +1359,19 @@ export default function App() {
                 {/* Enemy HP Bar */}
                 <div className="space-y-3">
                   <div className="flex justify-between items-end px-2">
-                    <div className="text-2xl font-black text-white tracking-tighter uppercase">The Void-Stalker</div>
-                    <div className="text-xs font-black text-red-500 uppercase">LVL 42</div>
+                    <div className="text-2xl font-black text-white tracking-tighter uppercase">
+                      {state.floor % 10 === 0 ? 'Dread Lord' : 'The Void-Stalker'}
+                    </div>
+                    <div className="text-xs font-black text-red-500 uppercase">LVL {state.floor}</div>
                   </div>
                   <div className="h-4 bg-black/60 border border-white/10 rounded-full overflow-hidden relative">
                     <motion.div 
                       className="absolute inset-0 bg-gradient-to-r from-red-900 to-red-600"
-                      initial={{ width: "100%" }}
-                      animate={{ width: "65%" }}
+                      initial={false}
+                      animate={{ width: `${(enemyHP / enemyMaxHP) * 100}%` }}
                     />
                     <div className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-white uppercase tracking-widest">
-                      1.4M / 2.2M
+                      {enemyHP > 1000000 ? `${(enemyHP / 1000000).toFixed(2)}M` : Math.floor(enemyHP).toLocaleString()} / {enemyMaxHP > 1000000 ? `${(enemyMaxHP / 1000000).toFixed(2)}M` : Math.floor(enemyMaxHP).toLocaleString()}
                     </div>
                   </div>
                 </div>
